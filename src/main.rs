@@ -33,7 +33,7 @@ fn get_query_statement() -> String {
     str_query.push_str("SELECT z.zdate, z.ztxdatestr, c.zname, z.zcontent, z.zamount, a.znicname ");
     str_query.push_str("FROM ZASSET a, ZCATEGORY c, ZINOUTCOME z ");
     str_query.push_str("WHERE z.ztxdatestr ");
-    str_query.push_str("BETWEEN \"2023-05-01\" AND \"2023-05-31\" ");
+    str_query.push_str("BETWEEN ?1 AND ?2 "); // Begin and end dates
     str_query.push_str("AND z.zisdel = 0 "); // zisdel flags deleted entries
     str_query.push_str("AND z.zdo_type = 1 "); // Type 1 is "expenses")
     str_query.push_str("AND z.ZASSETUID = a.ZUID "); // Join asset (pay method))
@@ -152,7 +152,7 @@ fn query_and_print(file_name: &str) {
 
     let str_query = get_query_statement();
     let mut stmt = conn.prepare(&str_query).unwrap();
-    let mut rows = stmt.query([]).unwrap();
+    let mut rows = stmt.query(["2023-05-01", "2023-05-31"]).unwrap();
 
     let mut tot_amt = 0.0;
     while let Some(row) = rows.next().unwrap() {
