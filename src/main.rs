@@ -134,6 +134,11 @@ fn process_amount(amount: f32) -> String {
     amt_str
 }
 
+fn process_date(date: String) -> String {
+    let parts: Vec<&str> = date.rsplit( "-").collect();
+    parts.join("/")
+}
+
 fn process_payment_method(pay_method: String) -> String {
     let ret_pay_method: String;
     match pay_method.as_str() {
@@ -158,10 +163,9 @@ fn query_and_print(file_name: &str) {
     while let Some(row) = rows.next().unwrap() {
         //println!("{}", row.get_unwrap(0));
         let _cocoa_timestamp: f64 = row.get_unwrap(0); // skip. Left here as a reminder of the data type ('cocoa timestamp')
-        let date: String = row.get_unwrap(1);
+        let date: String = process_date(row.get_unwrap(1));
         let category: String = process_category(row.get_unwrap(2));
         let name: String = process_name(row.get_unwrap(3));
-        let foo: f32 = row.get_unwrap(4_);
         let amt: String = process_amount(row.get_unwrap(4));
         let pay_method: String = process_payment_method(row.get_unwrap(5));
 
