@@ -123,7 +123,7 @@ fn process_name(name: String) -> String {
 }
 
 // Transform float "x.y" into String "x,y".
-fn process_amount(amount: f32) -> String {
+fn process_amount(amount: f64) -> String {
     //let mut amt_str = amount.to_string();
     let integer_part = amount.floor().to_string();
     let decimal_part = format!("{:02}", (100.0 * amount.fract()).round());
@@ -159,7 +159,8 @@ fn query_and_print(file_name: &str) {
     let mut stmt = conn.prepare(&str_query).unwrap();
     let mut rows = stmt.query(["2023-05-01", "2023-05-31"]).unwrap();
 
-    let mut tot_amt = 0.0;
+    println!("fecha;categoría;comentario;importe;forma pago");
+    let mut tot_amt:f64 = 0.0;
     while let Some(row) = rows.next().unwrap() {
         //println!("{}", row.get_unwrap(0));
         let _cocoa_timestamp: f64 = row.get_unwrap(0); // skip. Left here as a reminder of the data type ('cocoa timestamp')
@@ -170,10 +171,10 @@ fn query_and_print(file_name: &str) {
         let pay_method: String = process_payment_method(row.get_unwrap(5));
 
         println!("{};{};{};{};{}", date, category, name, amt, pay_method);
-        tot_amt += row.get_unwrap::<usize, f32>(4);
+        tot_amt += row.get_unwrap::<usize, f64>(4);
     }
 
-    println!("total amount: {:.2}", tot_amt);
+    println!("Total: {:.2}", tot_amt);
 
     //    conn.close();
 }
