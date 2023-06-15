@@ -116,8 +116,8 @@ fn parse_month(month: &Option<String>) -> Option<u8> {
 
     //println!("{:#?}", months);
     // First, try to obtain the month from a string
-    if months.contains_key(month_str.as_str()) {
-        let month_index = months.get(month_str.as_str()).copied().unwrap();
+    if months.contains_key(month_str.to_lowercase().as_str()) {
+        let month_index = months.get(month_str.to_lowercase().as_str()).copied().unwrap();
         return Some(month_index);
     }
 
