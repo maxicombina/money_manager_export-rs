@@ -1,3 +1,4 @@
+use chrono::{Datelike, NaiveDate};
 use clap::Parser;
 use rusqlite::{Connection, OpenFlags /*, Result*/};
 use std::collections::HashMap;
@@ -11,7 +12,7 @@ struct Args {
     /// The exported backup file from Money Manager
     file_name: String,
 
-    /// Start date in format "YYYY-MM-DD". If not provided, the 1st day of last month is used
+    /// Start date in format "YYYY-MM-DD". If not provided, the first day of last month is used
     #[arg(short, long)]
     start_date: Option<String>,
 
@@ -28,6 +29,26 @@ struct Args {
     debug: Option<u8>,
 }
 
+// Based on https://stackoverflow.com/questions/53687045/how-to-get-the-number-of-days-in-a-month-in-rust,
+// but using from_ymd_opt() rather than the deprecated from_ymd() in chrono-0.4.23
+pub fn get_days_from_month(year: i32, month: u32) -> u32 {
+    NaiveDate::from_ymd_opt(
+        match month {
+            12 => year + 1,
+            _ => year,
+        },
+        match month {
+            12 => 1,
+            _ => month + 1,
+        },
+        1,
+    )
+    .unwrap()
+    .signed_duration_since(NaiveDate::from_ymd_opt(year, month, 1).unwrap())
+    .num_days()
+    .try_into()
+    .unwrap()
+}
 fn get_query_statement() -> String {
     let mut str_query = String::from("");
     str_query.push_str("SELECT z.zdate, z.ztxdatestr, c.zname, z.zcontent, z.zamount, a.znicname ");
@@ -44,13 +65,14 @@ fn get_query_statement() -> String {
 }
 
 fn parse_month(month: &Option<String>) -> Option<u8> {
-    let mut month_index = 0;
     let month_str: &String;
+
     if month.is_none() {
         return None;
     } else {
         month_str = month.as_ref().unwrap();
     }
+
     let mut months = HashMap::new();
     months.insert("jan", 1);
     months.insert("january", 1);
@@ -95,7 +117,7 @@ fn parse_month(month: &Option<String>) -> Option<u8> {
     //println!("{:#?}", months);
     // First, try to obtain the month from a string
     if months.contains_key(month_str.as_str()) {
-        month_index = months.get(month_str.as_str()).copied().unwrap();
+        let month_index = months.get(month_str.as_str()).copied().unwrap();
         return Some(month_index);
     }
 
@@ -108,18 +130,17 @@ fn parse_month(month: &Option<String>) -> Option<u8> {
                 return None;
             }
         } // not yet, may be an invalid number
-        Err(e) => return None,
+        Err(_) => return None,
     }
-    return None;
 }
 fn process_category(category: String) -> String {
     // As of this writing there seems to be no more 'category/sub-category', only 'category'
-    category
+    category.trim().to_string()
 }
 
 // The description added to the transaction
 fn process_name(name: String) -> String {
-    name
+    name.trim().to_string()
 }
 
 // Transform float "x.y" into String "x,y".
@@ -135,7 +156,7 @@ fn process_amount(amount: f64) -> String {
 }
 
 fn process_date(date: String) -> String {
-    let parts: Vec<&str> = date.rsplit( "-").collect();
+    let parts: Vec<&str> = date.rsplit("-").collect();
     parts.join("/")
 }
 
@@ -152,15 +173,24 @@ fn process_payment_method(pay_method: String) -> String {
     }
     ret_pay_method
 }
-fn query_and_print(file_name: &str) {
-    let conn = Connection::open_with_flags(file_name, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+fn query_and_print(args: &Args) {
+    let conn =
+        Connection::open_with_flags(&args.file_name, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
 
     let str_query = get_query_statement();
     let mut stmt = conn.prepare(&str_query).unwrap();
-    let mut rows = stmt.query(["2023-05-01", "2023-05-31"]).unwrap();
+    //let mut rows = stmt.query(["2023-05-01", "2023-05-31"]).unwrap();
+    let mut rows = stmt
+        .query([
+            args.start_date.as_ref().unwrap(),
+            args.end_date.as_ref().unwrap(),
+        ])
+        .unwrap();
 
+    // println!("USING start date: {}", args.start_date.as_ref().unwrap());
+    // println!("USING end date: {}", args.end_date.as_ref().unwrap());
     println!("fecha;categoría;comentario;importe;forma pago");
-    let mut tot_amt:f64 = 0.0;
+    let mut tot_amt: f64 = 0.0;
     while let Some(row) = rows.next().unwrap() {
         //println!("{}", row.get_unwrap(0));
         let _cocoa_timestamp: f64 = row.get_unwrap(0); // skip. Left here as a reminder of the data type ('cocoa timestamp')
@@ -179,18 +209,87 @@ fn query_and_print(file_name: &str) {
     //    conn.close();
 }
 
-fn main() {
-    let args = Args::parse();
-    //println!("{:?}", args);
-
+fn init_args_dates(args: &mut Args) {
     let month_opt = parse_month(&args.month);
-    if month_opt.is_some() {
-        println!("month index: {}", month_opt.unwrap_or(0));
-    } else {
-        println!("Invalid month");
-    }
-    //println!("{:?}", args);
-    //return;
 
-    query_and_print(&args.file_name);
+    if month_opt.is_some() {
+        // We have a month, let it take priority
+        //println!("month index: {}", month_opt.unwrap());
+        //  endDay = monthrange(datetime.now().year, month)[1]
+        let end_day = get_days_from_month(chrono::Utc::now().year(), month_opt.unwrap().into());
+
+        // self.setStartDate(date(datetime.now().year, month, 1))
+        let start_date =
+            NaiveDate::from_ymd_opt(chrono::Utc::now().year(), month_opt.unwrap().into(), 1)
+                .unwrap();
+        args.start_date = Some(start_date.to_string());
+
+        //self.setEndDate(date(datetime.now().year, month, endDay))
+        let end_date = NaiveDate::from_ymd_opt(
+            chrono::Utc::now().year(),
+            month_opt.unwrap().into(),
+            end_day,
+        )
+        .unwrap();
+        args.end_date = Some(end_date.to_string());
+
+        //println!("start_date: {}", args.start_date.as_ref().unwrap());
+        //println!("end_date: {:?}", args.end_date.as_ref().unwrap());
+    } else {
+        //println!("Invalid month");
+        // Use args.start_date/args.end_date, or set them automatically to the previous month
+
+        if args.start_date.is_none() {
+            // No month, no start date => use last month for start_date
+            let start_date;
+            if chrono::Utc::now().month() == 1 {
+                start_date = NaiveDate::from_ymd_opt(chrono::Utc::now().year() - 1, 12, 1).unwrap();
+            } else {
+                start_date = NaiveDate::from_ymd_opt(
+                    chrono::Utc::now().year(),
+                    chrono::Utc::now().month() - 1,
+                    1,
+                )
+                .unwrap();
+            }
+            args.start_date = Some(start_date.to_string());
+        }
+
+        if args.end_date.is_none() {
+            // No end date: use the last day of args.start_date (already set above)
+
+            let parsed_start_date =
+                NaiveDate::parse_from_str(args.start_date.as_ref().unwrap(), "%Y-%m-%d");
+
+            let end_date;
+            if parsed_start_date.is_ok() {
+                let num_days_in_month = get_days_from_month(
+                    parsed_start_date.unwrap().year(),
+                    parsed_start_date.unwrap().month(),
+                );
+                end_date = NaiveDate::from_ymd_opt(
+                    parsed_start_date.unwrap().year(),
+                    parsed_start_date.unwrap().month(),
+                    num_days_in_month,
+                )
+                .unwrap();
+                args.end_date = Some(end_date.to_string());
+            } else {
+                println!("Warning: invalid start date provided '{}': automatic end-date detection is useless", args.start_date.as_ref().unwrap());
+                args.end_date = args.start_date.clone();
+            }
+        }
+    }
+
+    ////println!("Start date: {}", args.start_date.as_ref().unwrap());
+    ////println!("End date: {}", args.end_date.as_ref().unwrap());
+}
+
+fn main() {
+    let mut args = Args::parse();
+    //println!("{:?}", args);
+
+    init_args_dates(&mut args);
+    ////println!("Args: {:?}", args);
+    query_and_print(&args);
 }
