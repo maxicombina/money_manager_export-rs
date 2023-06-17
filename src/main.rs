@@ -29,6 +29,15 @@ struct Args {
     debug: Option<u8>,
 }
 
+// A processed version of Args. I don't want Option<T> all over the place.
+#[derive(Debug, Default)]
+struct Config {
+    file_name: String,
+    start_date: String,
+    end_date: String,
+    debug_level: u8,
+}
+
 // Based on https://stackoverflow.com/questions/53687045/how-to-get-the-number-of-days-in-a-month-in-rust,
 // but using from_ymd_opt() rather than the deprecated from_ymd() in chrono-0.4.23
 pub fn get_days_from_month(year: i32, month: u32) -> u32 {
@@ -117,7 +126,10 @@ fn parse_month(month: &Option<String>) -> Option<u8> {
     //println!("{:#?}", months);
     // First, try to obtain the month from a string
     if months.contains_key(month_str.to_lowercase().as_str()) {
-        let month_index = months.get(month_str.to_lowercase().as_str()).copied().unwrap();
+        let month_index = months
+            .get(month_str.to_lowercase().as_str())
+            .copied()
+            .unwrap();
         return Some(month_index);
     }
 
@@ -173,22 +185,17 @@ fn process_payment_method(pay_method: String) -> String {
     }
     ret_pay_method
 }
-fn query_and_print(args: &Args) {
+fn query_and_print(config: &Config) {
     let conn =
-        Connection::open_with_flags(&args.file_name, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        Connection::open_with_flags(&config.file_name, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
 
     let str_query = get_query_statement();
     let mut stmt = conn.prepare(&str_query).unwrap();
     //let mut rows = stmt.query(["2023-05-01", "2023-05-31"]).unwrap();
-    let mut rows = stmt
-        .query([
-            args.start_date.as_ref().unwrap(),
-            args.end_date.as_ref().unwrap(),
-        ])
-        .unwrap();
+    let mut rows = stmt.query([&config.start_date, &config.end_date]).unwrap();
 
-    // println!("USING start date: {}", args.start_date.as_ref().unwrap());
-    // println!("USING end date: {}", args.end_date.as_ref().unwrap());
+    println!("USING start date: {}", &config.start_date);
+    println!("USING end date: {}", &config.end_date);
     println!("fecha;categoría;comentario;importe;forma pago");
     let mut tot_amt: f64 = 0.0;
     while let Some(row) = rows.next().unwrap() {
@@ -209,7 +216,7 @@ fn query_and_print(args: &Args) {
     //    conn.close();
 }
 
-fn init_args_dates(args: &mut Args) {
+fn init_config(args: &Args, config: &mut Config) {
     let month_opt = parse_month(&args.month);
 
     if month_opt.is_some() {
@@ -222,7 +229,7 @@ fn init_args_dates(args: &mut Args) {
         let start_date =
             NaiveDate::from_ymd_opt(chrono::Utc::now().year(), month_opt.unwrap().into(), 1)
                 .unwrap();
-        args.start_date = Some(start_date.to_string());
+        config.start_date = start_date.to_string().clone();
 
         //self.setEndDate(date(datetime.now().year, month, endDay))
         let end_date = NaiveDate::from_ymd_opt(
@@ -231,65 +238,76 @@ fn init_args_dates(args: &mut Args) {
             end_day,
         )
         .unwrap();
-        args.end_date = Some(end_date.to_string());
+        config.end_date = end_date.to_string();
 
         //println!("start_date: {}", args.start_date.as_ref().unwrap());
         //println!("end_date: {:?}", args.end_date.as_ref().unwrap());
-    } else {
-        //println!("Invalid month");
-        // Use args.start_date/args.end_date, or set them automatically to the previous month
-
-        if args.start_date.is_none() {
-            // No month, no start date => use last month for start_date
-            let start_date;
-            if chrono::Utc::now().month() == 1 {
-                start_date = NaiveDate::from_ymd_opt(chrono::Utc::now().year() - 1, 12, 1).unwrap();
-            } else {
-                start_date = NaiveDate::from_ymd_opt(
-                    chrono::Utc::now().year(),
-                    chrono::Utc::now().month() - 1,
-                    1,
-                )
-                .unwrap();
-            }
-            args.start_date = Some(start_date.to_string());
-        }
-
-        if args.end_date.is_none() {
-            // No end date: use the last day of args.start_date (already set above)
-
-            let parsed_start_date =
-                NaiveDate::parse_from_str(args.start_date.as_ref().unwrap(), "%Y-%m-%d");
-
-            let end_date;
-            if parsed_start_date.is_ok() {
-                let num_days_in_month = get_days_from_month(
-                    parsed_start_date.unwrap().year(),
-                    parsed_start_date.unwrap().month(),
-                );
-                end_date = NaiveDate::from_ymd_opt(
-                    parsed_start_date.unwrap().year(),
-                    parsed_start_date.unwrap().month(),
-                    num_days_in_month,
-                )
-                .unwrap();
-                args.end_date = Some(end_date.to_string());
-            } else {
-                println!("Warning: invalid start date provided '{}': automatic end-date detection is useless", args.start_date.as_ref().unwrap());
-                args.end_date = args.start_date.clone();
-            }
-        }
+        return;
     }
 
+    /* No month provided, let's see start/end dates */
+    //println!("Invalid month");
+    if args.start_date.is_none() {
+        // No month, no start date => use last month for start_date
+        let start_date;
+        if chrono::Utc::now().month() == 1 {
+            start_date = NaiveDate::from_ymd_opt(chrono::Utc::now().year() - 1, 12, 1).unwrap();
+        } else {
+            start_date = NaiveDate::from_ymd_opt(
+                chrono::Utc::now().year(),
+                chrono::Utc::now().month() - 1,
+                1,
+            )
+            .unwrap();
+        }
+        config.start_date = start_date.to_string();
+    } else {
+        config.start_date = args.start_date.as_ref().unwrap().clone();
+    }
+
+    if args.end_date.is_none() {
+        // No end date: use the last day of config.start_date (already set above)
+
+        let parsed_start_date =
+            NaiveDate::parse_from_str(&config.start_date, "%Y-%m-%d");
+
+        let end_date;
+        if parsed_start_date.is_ok() {
+            let num_days_in_month = get_days_from_month(
+                parsed_start_date.unwrap().year(),
+                parsed_start_date.unwrap().month(),
+            );
+            end_date = NaiveDate::from_ymd_opt(
+                parsed_start_date.unwrap().year(),
+                parsed_start_date.unwrap().month(),
+                num_days_in_month,
+            )
+            .unwrap();
+            config.end_date = end_date.to_string();
+        } else {
+            println!("Warning: invalid start date provided '{}': automatic end-date detection is useless", args.start_date.as_ref().unwrap());
+            config.end_date = config.start_date.clone();
+        }
+    } else {
+        config.end_date = args.end_date.as_ref().unwrap().clone();
+    }
+
+    // The rest of config params
+    config.file_name = args.file_name.clone();
+    config.debug_level = args.debug.unwrap_or(0)
     ////println!("Start date: {}", args.start_date.as_ref().unwrap());
     ////println!("End date: {}", args.end_date.as_ref().unwrap());
 }
 
 fn main() {
-    let mut args = Args::parse();
-    //println!("{:?}", args);
+    let args = Args::parse();
+    let mut config = Default::default();
+    //println!("Args: {:?}", args);
+    //println!("{:?}", config);
 
-    init_args_dates(&mut args);
+    init_config(&args, &mut config);
+
     ////println!("Args: {:?}", args);
-    query_and_print(&args);
+    //println!("Config: {:?}", config);
+    query_and_print(&config);
 }
