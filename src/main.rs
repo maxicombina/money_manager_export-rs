@@ -1,7 +1,9 @@
 use chrono::{Datelike, NaiveDate};
 use clap::Parser;
+use faccess::{AccessMode, PathExt};
 use rusqlite::{Connection, OpenFlags /*, Result*/};
 use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Parser, Debug)]
 #[command(name = "Money Manager Export")]
@@ -77,9 +79,11 @@ fn parse_month(month: &Option<String>) -> Option<u8> {
     let month_str: &String;
 
     if month.is_none() {
+        //println!("No month in command line");
         return None;
     } else {
         month_str = month.as_ref().unwrap();
+        //println!("Month in command line: {}", month_str);
     }
 
     let mut months = HashMap::new();
@@ -141,7 +145,7 @@ fn parse_month(month: &Option<String>) -> Option<u8> {
             } else {
                 return None;
             }
-        } // not yet, may be an invalid number
+        }
         Err(_) => return None,
     }
 }
@@ -188,14 +192,15 @@ fn process_payment_method(pay_method: String) -> String {
 fn query_and_print(config: &Config) {
     let conn =
         Connection::open_with_flags(&config.file_name, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-
     let str_query = get_query_statement();
+    //    println!("strquery: '{}'", &str_query);
     let mut stmt = conn.prepare(&str_query).unwrap();
-    //let mut rows = stmt.query(["2023-05-01", "2023-05-31"]).unwrap();
+
+    //    println!("USING start date: {}", &config.start_date);
+    //    println!("USING end date: {}", &config.end_date);
+
     let mut rows = stmt.query([&config.start_date, &config.end_date]).unwrap();
 
-    println!("USING start date: {}", &config.start_date);
-    println!("USING end date: {}", &config.end_date);
     println!("fecha;categoría;comentario;importe;forma pago");
     let mut tot_amt: f64 = 0.0;
     while let Some(row) = rows.next().unwrap() {
@@ -217,21 +222,28 @@ fn query_and_print(config: &Config) {
 }
 
 fn init_config(args: &Args, config: &mut Config) {
-    let month_opt = parse_month(&args.month);
+    // Non-date of config params
+    config.file_name = args.file_name.clone();
+    config.debug_level = args.debug.unwrap_or(0);
 
+    // Basic check on database file
+    let database_path = Path::new(&config.file_name);
+    if !database_path.exists() || database_path.access(AccessMode::READ).is_err() {
+        eprintln!("Cannot read database file '{}'", &config.file_name);
+        std::process::exit(1);
+    }
+    // Date config params
+    let month_opt = parse_month(&args.month);
     if month_opt.is_some() {
+        //println!("Parsing month");
         // We have a month, let it take priority
-        //println!("month index: {}", month_opt.unwrap());
-        //  endDay = monthrange(datetime.now().year, month)[1]
         let end_day = get_days_from_month(chrono::Utc::now().year(), month_opt.unwrap().into());
 
-        // self.setStartDate(date(datetime.now().year, month, 1))
         let start_date =
             NaiveDate::from_ymd_opt(chrono::Utc::now().year(), month_opt.unwrap().into(), 1)
                 .unwrap();
         config.start_date = start_date.to_string().clone();
 
-        //self.setEndDate(date(datetime.now().year, month, endDay))
         let end_date = NaiveDate::from_ymd_opt(
             chrono::Utc::now().year(),
             month_opt.unwrap().into(),
@@ -240,13 +252,13 @@ fn init_config(args: &Args, config: &mut Config) {
         .unwrap();
         config.end_date = end_date.to_string();
 
-        //println!("start_date: {}", args.start_date.as_ref().unwrap());
-        //println!("end_date: {:?}", args.end_date.as_ref().unwrap());
         return;
     }
 
+    //println!("No month provided");
     /* No month provided, let's see start/end dates */
-    //println!("Invalid month");
+    let parsed_start_date;
+    let parsed_end_date;
     if args.start_date.is_none() {
         // No month, no start date => use last month for start_date
         let start_date;
@@ -265,36 +277,52 @@ fn init_config(args: &Args, config: &mut Config) {
         config.start_date = args.start_date.as_ref().unwrap().clone();
     }
 
+    // Check and format start date
+    parsed_start_date = NaiveDate::parse_from_str(&config.start_date, "%Y-%m-%d");
+    if parsed_start_date.is_err() {
+        eprintln!(
+            "Invalid start date provided: '{}'. Please use format YYYY-MM-DD and a valid date",
+            &config.start_date
+        );
+        std::process::exit(1);
+    }
+    // This is done to transform '2023-2-1' into '2023-02-01', otherwise the query to sqlite does not work correctly.
+    assert!(parsed_start_date.is_ok());
+    config.start_date = parsed_start_date.unwrap().to_string();
+
     if args.end_date.is_none() {
         // No end date: use the last day of config.start_date (already set above)
-
-        let parsed_start_date =
-            NaiveDate::parse_from_str(&config.start_date, "%Y-%m-%d");
-
         let end_date;
-        if parsed_start_date.is_ok() {
-            let num_days_in_month = get_days_from_month(
-                parsed_start_date.unwrap().year(),
-                parsed_start_date.unwrap().month(),
-            );
-            end_date = NaiveDate::from_ymd_opt(
-                parsed_start_date.unwrap().year(),
-                parsed_start_date.unwrap().month(),
-                num_days_in_month,
-            )
-            .unwrap();
-            config.end_date = end_date.to_string();
-        } else {
-            println!("Warning: invalid start date provided '{}': automatic end-date detection is useless", args.start_date.as_ref().unwrap());
-            config.end_date = config.start_date.clone();
-        }
+
+        assert!(parsed_start_date.is_ok());
+        let num_days_in_month = get_days_from_month(
+            parsed_start_date.unwrap().year(),
+            parsed_start_date.unwrap().month(),
+        );
+        end_date = NaiveDate::from_ymd_opt(
+            parsed_start_date.unwrap().year(),
+            parsed_start_date.unwrap().month(),
+            num_days_in_month,
+        )
+        .unwrap();
+        config.end_date = end_date.to_string();
     } else {
         config.end_date = args.end_date.as_ref().unwrap().clone();
     }
 
-    // The rest of config params
-    config.file_name = args.file_name.clone();
-    config.debug_level = args.debug.unwrap_or(0)
+    // Check and format end date
+    parsed_end_date = NaiveDate::parse_from_str(&config.end_date, "%Y-%m-%d");
+    if parsed_end_date.is_err() {
+        eprintln!(
+            "Invalid end date provided: '{}'. Please use format YYYY-MM-DD and a valid date",
+            &config.end_date
+        );
+        std::process::exit(1);
+    }
+    // This is done to transform '2023-2-1' into '2023-02-01', otherwise the query to sqlite does not work correctly.
+    assert!(parsed_end_date.is_ok());
+    config.end_date = parsed_end_date.unwrap().to_string();
+
     ////println!("Start date: {}", args.start_date.as_ref().unwrap());
     ////println!("End date: {}", args.end_date.as_ref().unwrap());
 }
