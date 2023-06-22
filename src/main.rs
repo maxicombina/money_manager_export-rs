@@ -138,16 +138,10 @@ fn parse_month(month: &Option<String>) -> Option<u8> {
     }
 
     // Second, try to obtain a month from a number
-    match month_str.parse::<u8>() {
-        Ok(v) => {
-            if v >= 1 && v <= 12 {
-                return Some(v);
-            } else {
-                return None;
-            }
-        }
-        Err(_) => return None,
-    }
+    // Nice way to transform a Result<> into an Option<>
+    month_str.parse::<u8>()
+        .ok()
+        .filter(|v| *v >= 1 && *v <= 12)
 }
 fn process_category(category: String) -> String {
     // As of this writing there seems to be no more 'category/sub-category', only 'category'
