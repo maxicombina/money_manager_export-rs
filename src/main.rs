@@ -23,6 +23,7 @@ struct Args {
     end_date: Option<String>,
 
     /// Process full month from current year. Accepted values are numeric or Jan/January/Ene/Enero, etc
+    //#[arg(short, long, allow_negative_numbers = true)] --> trick to allow negative numbers in CLI options
     #[arg(short, long)]
     month: Option<String>,
 
@@ -54,12 +55,13 @@ pub fn get_days_from_month(year: i32, month: u32) -> u32 {
         },
         1,
     )
-    .unwrap()
+    .expect("Date constructed must be valid")
     .signed_duration_since(NaiveDate::from_ymd_opt(year, month, 1).unwrap())
     .num_days()
     .try_into()
-    .unwrap()
+    .expect("Converted an i64 into i32, but num_days() must always be <= 31")
 }
+
 fn get_query_statement() -> String {
     let mut str_query = String::from("");
     str_query.push_str("SELECT z.zdate, z.ztxdatestr, c.zname, z.zcontent, z.zamount, a.znicname ");
